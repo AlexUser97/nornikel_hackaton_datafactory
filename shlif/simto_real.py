@@ -60,9 +60,16 @@ def corrupt(
         Искажённый серый uint8-снимок той же формы H×W.
     """
     rng = np.random.default_rng(seed)
-    img = _as_uint8_gray(image).astype(np.float32)
+    # ВАЖНО: сохраняем ЦВЕТ. Раньше здесь была конверсия в оттенки серого — для
+    # цветного анализа руд это убивало цвет (тальк/сульфиды определяются по цвету),
+    # из-за чего под «загрязнением» тальк обнулялся. Работаем по всем каналам RGB.
+    src = np.asarray(image)
+    was_gray = src.ndim == 2
+    if was_gray:
+        src = cv2.cvtColor(src, cv2.COLOR_GRAY2RGB)
+    img = src.astype(np.float32)
 
-    # Контраст вокруг середины + яркость.
+    # Контраст вокруг середины + яркость (одинаково по каналам — не сдвигает баланс цвета).
     img = (img - 127.0) * float(contrast) + 127.0 + float(brightness)
 
     if gaussian_noise > 0:
@@ -71,16 +78,16 @@ def corrupt(
     img = np.clip(img, 0, 255).astype(np.uint8)
 
     if blur_sigma and blur_sigma > 0:
-        # ksize=0 -> вычисляется из sigma автоматически.
         img = cv2.GaussianBlur(img, (0, 0), sigmaX=float(blur_sigma))
 
     if jpeg_quality is not None:
         q = int(np.clip(jpeg_quality, 1, 100))
         ok, enc = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), q])
         if ok:
-            img = cv2.imdecode(enc, cv2.IMREAD_GRAYSCALE)
+            img = cv2.imdecode(enc, cv2.IMREAD_COLOR)  # цветной декод (был GRAYSCALE)
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-    return img
+    return cv2.cvtColor(img, cv2.COLOR_RGB2GRAY) if was_gray else img
 
 
 def mild_perturbation(image: np.ndarray, seed: int) -> np.ndarray:

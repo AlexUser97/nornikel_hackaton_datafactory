@@ -122,33 +122,24 @@ def analyze(
         except Exception:  # noqa: BLE001
             defects = []
 
-    # --- Классификация сорта по ТЗ (уточнение организаторов) ---------------
-    # Ансамбль двух сигналов (валидировано на реальных папках):
-    #   • обученная СЕГМЕНТАЦИЯ талька (U-Net) — точные зоны оталькования, доля
-    #     площади; надёжна на снимках зон (крупный план), ложных ~0 на рядовых/тонких;
-    #   • КЛАССИФИКАТОР сорта (EfficientNet-B0, 3 класса) — устойчив к домену/съёмке
-    #     (оталькованные recall≈0.97, рядовые≈0.95, тонкие≈0.88).
-    # Оталькованная = классификатор назвал оталькованной ИЛИ доля талька по сегментации
-    # выше порога. Иначе рядовая/труднообогатимая — по классификатору (фолбэк: доли фаз).
-    # Порог доли талька для «оталькованной» — строго по ТЗ: > 10%. Снимки с меньшей
-    # долей талька, но оталькованные, ловит классификатор (второй сигнал ансамбля).
-    _TALC_SEG_TRIGGER = TALC_THRESHOLD  # 0.10 (ТЗ task-3)
+    # --- Классификация сорта по ТЗ (когерентно с показанной маской) ----------
+    # «Оталькованная» — по доле ТАЛЬКА в НЕРУДНОЙ части (тальк = тёмные вкрапления/зоны
+    # в силикатной матрице): доля зоны оталькования от НЕ-рудной площади > 10% (ТЗ). Так
+    # вердикт СОГЛАСОВАН с тем, что видно на маске (не бывает «оталькованная при 0% талька»).
+    # Рядовая/труднообогатимая (когда талька ≤10%) — по обученному классификатору.
     ore_class = classify_ore(fractions)
     if ore_class is not None:
         model_img = image if image.ndim == 3 else cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-        # доля талька по обученной сегментации (для зон и как сигнал класса)
-        talc_seg = ore_class["talc"]
-        talc_src = "доли фаз (классика)"
-        try:
-            from .talc_model import available as talc_avail
-            from .talc_model import predict_talc_mask
-            if talc_avail():
-                tm = predict_talc_mask(model_img)
-                if tm is not None:
-                    talc_seg = float(tm.mean())
-                talc_src = "сегментация талька (U-Net)"
-        except Exception:  # noqa: BLE001
-            pass
+        from scipy import ndimage as _ndi0
+        talc_i = next((i for i, n in enumerate(class_names) if "тальк" in n.lower()), None)
+        sulf_i = [i for i, n in enumerate(class_names) if "сраст" in n.lower()]
+        talc_zone0 = _ndi0.binary_fill_holes(mask == talc_i) if talc_i is not None else np.zeros_like(mask, bool)
+        sulf0 = np.isin(mask, sulf_i) if sulf_i else np.zeros_like(mask, bool)
+        talc_in_nonore = float(talc_zone0.sum()) / (int((~sulf0).sum()) or 1)
+        talc_whole = float(talc_zone0.mean())
+        ore_class["talc_seg_frac"] = round(talc_whole, 4)
+        ore_class["talc_in_nonore"] = round(talc_in_nonore, 4)
+
         # классификатор сорта (3 класса), при панораме — агрегирование по плиткам
         sp, p_ot, p_ry, p_tr = None, 0.0, 0.0, 0.0
         try:
@@ -163,23 +154,28 @@ def analyze(
             p_ry, p_tr = pr.get("рядовая", 0.0), pr.get("труднообогатимая", 0.0)
         except Exception:  # noqa: BLE001 — нет весов/torch -> фолбэк на доли фаз
             pass
-
-        clf_says_talc = sp is not None and p_ot >= p_ry and p_ot >= p_tr and p_ot > 0
-        ore_class["talc_seg_frac"] = round(talc_seg, 4)
         if sp is not None:
-            # откалиброванная уверенность классификатора (temperature scaling) +
-            # флаг «требует проверки эксперта» (human-in-the-loop)
             ore_class["classifier_confidence"] = sp.get("confidence")
             ore_class["needs_review"] = bool(sp.get("needs_review"))
-        if talc_seg > _TALC_SEG_TRIGGER or clf_says_talc:
+
+        clf_talc = sp is not None and p_ot >= p_ry and p_ot >= p_tr and p_ot > 0
+        if talc_in_nonore > TALC_THRESHOLD:   # > 10% талька в нерудной части -> оталькованная
             ore_class["verdict"] = "Оталькованная руда"
             ore_class["talc_bearing"] = True
-            if talc_seg > _TALC_SEG_TRIGGER:
-                ore_class["source"] = talc_src
-                ore_class["rule"] = f"тальк (сегментация) {talc_seg*100:.1f}% > {_TALC_SEG_TRIGGER*100:.0f}%"
-            else:
-                ore_class["source"] = sp["source"]
-                ore_class["rule"] = f"классификатор: оталькованная (p={p_ot:.2f}); тальк(сегм.) {talc_seg*100:.1f}%"
+            ore_class["source"] = "сегментация талька (доля в нерудной части)"
+            ore_class["rule"] = (f"тальк {talc_in_nonore*100:.1f}% от нерудной части > {TALC_THRESHOLD*100:.0f}% "
+                                 f"(зоны оталькования, {talc_whole*100:.1f}% кадра)")
+        elif clf_talc:
+            # Классификатор уверенно относит к оталькованной, но тальк не локализован
+            # сегментацией (мелкий/диффузный тальк на полноразмерных снимках — известное
+            # ограничение). Честно: помечаем как предварительное, требует проверки эксперта.
+            ore_class["verdict"] = "Оталькованная руда"
+            ore_class["talc_bearing"] = True
+            ore_class["needs_review"] = True
+            ore_class["source"] = sp["source"] + " (тальк не локализован)"
+            ore_class["rule"] = (f"классификатор: оталькованная (p={p_ot:.2f}); тальк сегментацией не "
+                                 f"локализован ({talc_in_nonore*100:.1f}% нерудной части) — мелкий/диффузный, "
+                                 f"предварительно, требует проверки эксперта")
         elif sp is not None and (p_ry + p_tr) > 0:
             conf = max(p_ry, p_tr) / (p_ry + p_tr)
             ore_class["verdict"] = "Рядовая руда" if p_ry >= p_tr else "Труднообогатимая руда"
@@ -188,7 +184,7 @@ def analyze(
             ore_class["model_confidence"] = round(conf, 3)
             ore_class["model_probs"] = {"рядовая": round(p_ry, 3), "труднообогатимая": round(p_tr, 3),
                                         "оталькованная": round(p_ot, 3)}
-            ore_class["rule"] = (f"тальк(сегм.) {talc_seg*100:.1f}% ≤ {_TALC_SEG_TRIGGER*100:.0f}%; "
+            ore_class["rule"] = (f"тальк {talc_in_nonore*100:.1f}% ≤ {TALC_THRESHOLD*100:.0f}% нерудной части; "
                                  f"классификатор рядовая/труднообогатимая, уверенность {conf*100:.0f}%")
         else:
             ore_class.setdefault("source", "эвристика по долям фаз")
@@ -212,13 +208,18 @@ def analyze(
         # Общая доля сульфидов (ТЗ) = все сульфидные срастания (обычные + тонкие),
         # отдельно от оксидов (магнетита). Считаем всегда — базовая метрика ТЗ.
         ore_area = np.isin(mask, ore_idx) if ore_idx else np.zeros_like(mask, bool)
+        # доля талька В НЕРУДНОЙ ЧАСТИ (решает класс: >10% -> оталькованная)
+        nonore_px = int((~ore_area).sum()) or 1
         proportions = {
             "общая доля сульфидов": round(float(ore_area.mean()), 4),
             "тальк (зона оталькования)": round(float(talc_zone.mean()), 4),
+            "тальк в нерудной части": round(float(talc_zone.sum()) / nonore_px, 4),
             "оксиды (магнетит)": round(float((mask == ox_idx).mean()), 4) if ox_idx is not None else 0.0,
         }
-        # При тальке >10% срастания НЕ ищем (указание организаторов) -> не оцениваем.
-        if talc_bearing:
+        # При РЕАЛЬНОЙ зоне талька (>порога, локализована) срастания не оцениваем
+        # (указание организаторов). Если тальк не локализован (класс от классификатора) —
+        # срастания показываем.
+        if talc_bearing and float(talc_zone.mean()) > 0.03:
             proportions["срастания (рудные вкрапленники)"] = None
             proportions["_срастания_note"] = "не оцениваются (оталькованная руда, тальк > порога)"
         else:

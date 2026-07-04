@@ -46,6 +46,17 @@ def _solidity(blob: np.ndarray, area: int) -> float:
     return area / hull_area if hull_area > 0 else 0.0
 
 
+def _remove_small(binary: np.ndarray, min_area: float) -> np.ndarray:
+    """Убирает связные компоненты площадью меньше ``min_area`` (шумовые крохи)."""
+    b = binary.astype(np.uint8)
+    n, lbl, stats, _ = cv2.connectedComponentsWithStats(b, connectivity=8)
+    out = np.zeros(b.shape, dtype=bool)
+    for i in range(1, n):
+        if stats[i, cv2.CC_STAT_AREA] >= min_area:
+            out[lbl == i] = True
+    return out
+
+
 def _local_std(gray: np.ndarray, ksize: int = 9) -> np.ndarray:
     """Локальное СКО яркости (мера текстуры)."""
     g = gray.astype(np.float32)
@@ -119,44 +130,45 @@ def ore_petro_segment(
     mask = np.full((h, w), GANGUE, dtype=np.int32)
     mask[oxide] = OXIDE
 
-    # --- Тальк: обученный U-Net (если есть), иначе текстурный детектор ---
+    # --- Сульфидные срастания: классифицируем ПО ВСЕЙ маске (обычные/тонкие) ---
+    ore_u8 = cv2.morphologyEx(sulfide.astype(np.uint8), cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(ore_u8, connectivity=8)
+    big_area = _MIN_ORE_FRAC * 12 * h * w   # ~крупный вкрапленник
+    for lbl in range(1, n):
+        area = int(stats[lbl, cv2.CC_STAT_AREA])
+        if area < 6:
+            continue
+        blob = labels == lbl
+        ordinary = area >= big_area and _solidity(blob, area) >= 0.55
+        mask[blob] = ORDINARY if ordinary else FINE
+
+    # --- Тальк: обученный U-Net -> КОГЕРЕНТНЫЕ ЗОНЫ оталькования (как размечает геолог,
+    # см. service_folder/1.jpg): замыкание разрывов синего контура + заполнение. Зона
+    # красится ЦЕЛИКОМ поверх матрицы/оксидов, но ЯРКИЕ сульфидные ВКРАПИНКИ внутри
+    # сохраняются (важны по ТЗ). Порог/gate по яркости НЕ применяем — авторитет по
+    # тальку — обученная модель, иначе зоны средней яркости терялись бы. ---
     from .talc_model import predict_talc_mask
-    talc_model = predict_talc_mask(rgb)
-    if talc_model is not None:
-        talc_raw = talc_model
+    tm = predict_talc_mask(rgb)
+    if tm is not None:
+        talc_raw = np.asarray(tm, dtype=bool)
     else:
-        talc_raw = detect_talc(gray, gangue)
+        talc_raw = np.asarray(detect_talc(gray, gangue), dtype=bool)
         if use_blue_annotation:
             region, frac = extract_blue_regions(rgb)
             if frac > 0.002:
                 talc_raw = talc_raw | (region > 0)
-    talc_score = float(np.asarray(talc_raw, dtype=bool).mean())
-    talc_bearing = talc_score > _TALC_BEARING
 
-    if talc_bearing:
-        # Оталькованная руда: срастания НЕ ищем (указание организаторов). Зону
-        # оталькования выделяем ЦЕЛИКОМ (замыкание + заполнение), сульфиды-вкрапинки
-        # внутри неё поглощаются зоной; вне талька — оксиды/фон.
+    if talc_raw.any():
+        k = max(9, (int(round(min(h, w) * 0.02)) | 1))
         tz = cv2.morphologyEx(talc_raw.astype(np.uint8), cv2.MORPH_CLOSE,
-                              cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (13, 13)))
-        tz = binary_fill_holes(tz > 0)
-        mask[tz & (mask != OXIDE)] = TALC
-        mask[tz] = TALC  # зона целиком (поверх оксидов внутри неё)
-    else:
-        # Рядовая/труднообогатимая: классифицируем сульфидные срастания.
-        ore_u8 = cv2.morphologyEx(sulfide.astype(np.uint8), cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
-        n, labels, stats, _ = cv2.connectedComponentsWithStats(ore_u8, connectivity=8)
-        big_area = _MIN_ORE_FRAC * 12 * h * w   # ~крупный вкрапленник
-        for lbl in range(1, n):
-            area = int(stats[lbl, cv2.CC_STAT_AREA])
-            if area < 6:
-                continue
-            blob = labels == lbl
-            ordinary = area >= big_area and _solidity(blob, area) >= 0.55
-            mask[blob] = ORDINARY if ordinary else FINE
-        # Небольшой тальк (если есть) — в нерудных зонах, не затирая срастания.
-        talc = (talc_raw > 0) & (mask == GANGUE)
-        mask[talc] = TALC
+                              cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+        talc_zone = binary_fill_holes(tz > 0)
+        talc_zone = _remove_small(talc_zone, 0.002 * h * w)   # убрать шумовые крохи
+        bright_ore = bright & (~is_neutral)                   # однозначно рудные вкрапинки
+        keep_speck = talc_zone & bright_ore & np.isin(mask, [ORDINARY, FINE])
+        prev = mask.copy()
+        mask[talc_zone] = TALC
+        mask[keep_speck] = prev[keep_speck]                   # вернуть сульфиды внутри зоны
 
     prob = np.zeros((h, w, N_CLASSES), dtype=np.float32)
     for k in range(N_CLASSES):

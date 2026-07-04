@@ -222,6 +222,7 @@ def verdict_html(ore_class: dict, conclusion: str, proportions: dict | None = No
     if proportions:
         sulf = proportions.get("общая доля сульфидов", 0) * 100
         talc = proportions.get("тальк (зона оталькования)", 0) * 100
+        talc_nm = proportions.get("тальк в нерудной части", 0) * 100
         oxide = proportions.get("оксиды (магнетит)", 0) * 100
         sras = proportions.get("срастания (рудные вкрапленники)")
         sras_html = ("не оцениваются<br><span class='kts-sub'>(оталькованная руда)</span>"
@@ -230,7 +231,9 @@ def verdict_html(ore_class: dict, conclusion: str, proportions: dict | None = No
             '<div style="display:flex;gap:22px;margin:10px 0 2px;flex-wrap:wrap">'
             f'<div><div class="metric-label">Общая доля сульфидов</div>'
             f'<div style="font-size:1.3rem;font-weight:700;color:{_hex(PHASE_COLORS[5])}">{sulf:.1f}%</div></div>'
-            f'<div><div class="metric-label">Доля талька (зона оталькования)</div>'
+            f'<div><div class="metric-label">Тальк в нерудной части <span class="kts-sub">(порог класса 10%)</span></div>'
+            f'<div style="font-size:1.3rem;font-weight:700;color:{_hex(PHASE_COLORS[2])}">{talc_nm:.1f}%</div></div>'
+            f'<div><div class="metric-label">Тальк (зона, % кадра)</div>'
             f'<div style="font-size:1.3rem;font-weight:700;color:{_hex(PHASE_COLORS[2])}">{talc:.1f}%</div></div>'
             f'<div><div class="metric-label">Срастания (обычные/тонкие)</div>'
             f'<div style="font-size:1.3rem;font-weight:700;color:{_hex(PHASE_COLORS[1])}">{sras_html}</div></div>'
