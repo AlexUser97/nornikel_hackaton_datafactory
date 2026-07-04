@@ -19,11 +19,12 @@ _STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 _MODEL = None
 _THR = 0.10
+_VERSION = None          # версия весов (для выявления устаревших/несовместимых)
 _LOAD_FAILED = False
 
 
 def _lazy_load(path: Path | str = _DEFAULT_PATH):
-    global _MODEL, _THR, _LOAD_FAILED
+    global _MODEL, _THR, _VERSION, _LOAD_FAILED
     if _MODEL is not None or _LOAD_FAILED:
         return _MODEL
     path = Path(path)
@@ -40,6 +41,7 @@ def _lazy_load(path: Path | str = _DEFAULT_PATH):
         model.eval()
         _MODEL = model
         _THR = float(ckpt.get("talc_threshold", 0.10))
+        _VERSION = ckpt.get("model_version")  # None у старых (weak-supervised) весов
     except Exception:  # noqa: BLE001 — нет smp/torch/битые веса -> фолбэк
         _LOAD_FAILED = True
         _MODEL = None
@@ -53,6 +55,12 @@ def available(path: Path | str = _DEFAULT_PATH) -> bool:
 def talc_threshold() -> float:
     _lazy_load()
     return _THR
+
+
+def model_version() -> str | None:
+    """Версия загруженных весов талька. None — веса старые/без версии (устаревшие)."""
+    _lazy_load()
+    return _VERSION
 
 
 def predict_talc_mask(image_rgb: np.ndarray, prob_thr: float = 0.5,

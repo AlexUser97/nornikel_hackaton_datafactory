@@ -46,6 +46,37 @@ from shlif.simto_real import DEMO_PRESET_DESC, DEMO_PRESETS, corrupt
 
 st.set_page_config(page_title="Кто твой шлиф — Протокол испытаний", page_icon="🔬", layout="wide")
 
+# Ожидаемые версии весов (совпадают со стемпом обученных моделей). Если загруженные
+# веса без версии/другой версии — это устаревшие веса: показываем предупреждение, чтобы
+# не повторялся кейс «новый код + старые веса → тальк не в том месте».
+EXPECTED_TALC_VERSION = "talc-supervised-2026-07-05"
+EXPECTED_SORT_VERSION = "sort-efficientnet-v2-2026-07-05"
+
+
+def _model_status() -> None:
+    """Статус активных весов в сайдбаре + предупреждение об устаревших/отсутствующих."""
+    from shlif import sort_model, talc_model
+    stale = []
+    if talc_model.available():
+        v = talc_model.model_version()
+        if v != EXPECTED_TALC_VERSION:
+            stale.append(f"тальк ({v or 'без версии'})")
+    else:
+        stale.append("тальк (весов нет → фолбэк)")
+    if sort_model.available():
+        v = sort_model.model_version()
+        if v != EXPECTED_SORT_VERSION:
+            stale.append(f"классификатор ({v or 'без версии'})")
+    else:
+        stale.append("классификатор (весов нет → фолбэк)")
+    if stale:
+        st.sidebar.warning("⚠ Устаревшие/отсутствующие веса: " + ", ".join(stale)
+                           + ". Обновите `weights/` до актуальных — иначе результаты некорректны "
+                             "(напр. тальк не в том месте).")
+    else:
+        st.sidebar.caption(f"✅ модели актуальны: тальк `{EXPECTED_TALC_VERSION}`, "
+                           f"сорт `{EXPECTED_SORT_VERSION}`")
+
 ss = st.session_state
 ss.setdefault("source_image", None)   # исходный снимок до загрязнения
 ss.setdefault("image", None)          # рабочий снимок (RGB uint8)
@@ -162,6 +193,7 @@ def sidebar() -> dict:
 
     run = st.sidebar.button("▶️ Проанализировать", type="primary", use_container_width=True)
     st.sidebar.divider()
+    _model_status()  # версии весов + предупреждение об устаревших
     st.sidebar.caption("Стек open-source · веса локально · телеметрия отключена")
 
     return dict(up=up, demo_ore=demo_ore, profile_name=profile_name, profile=profile,

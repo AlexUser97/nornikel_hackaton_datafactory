@@ -29,7 +29,14 @@ _MODEL = None
 _CLASSES: list[str] = []
 _TF = None
 _TEMPERATURE = 1.0        # temperature scaling (калибровка уверенности), 1.0 = без калибровки
+_VERSION = None           # версия весов (None у старых/несовместимых)
 _LOAD_FAILED = False
+
+
+def model_version() -> str | None:
+    """Версия загруженных весов классификатора. None — старые веса без версии."""
+    _lazy_load()
+    return _VERSION
 
 # Порог откалиброванной уверенности: ниже — вердикт помечается «требует проверки эксперта»
 # (human-in-the-loop). Считается на откалиброванных вероятностях (ECE≈0.02).
@@ -52,6 +59,7 @@ def _lazy_load(path: Path | str = _DEFAULT_PATH):
         ckpt = torch.load(str(path), map_location="cpu", weights_only=False)
         _CLASSES = ckpt.get("classes", list(_VERDICT))
         _TEMPERATURE = float(ckpt.get("temperature", 1.0))
+        globals()["_VERSION"] = ckpt.get("model_version")  # None у старых весов
         model = models.efficientnet_b0(weights=None)
         import torch.nn as nn
 
