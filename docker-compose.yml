@@ -1,0 +1,15 @@
+# Разворачивание одной командой:  docker compose up
+# После сборки образа интернет не требуется.
+services:
+  shlif:
+    build: .
+    image: kto-tvoy-shlif:latest
+    container_name: kto-tvoy-shlif
+    ports:
+      - "8501:8501"
+    environment:
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+    volumes:
+      # Локальное хранилище результатов (снимок + PDF + JSON рядом), никакого облака.
+      - ./data:/app/data
+    restart: unless-stopped

@@ -1,0 +1,21 @@
+# «Кто твой шлиф» — импортонезависимый QC-ассистент металлографа.
+# Весь стек open-source, работает офлайн. Версии прибиты под демо.
+#
+# Ядро (обязательно, всё ядро работает на CPU без ML-весов):
+numpy==1.23.4
+scipy==1.10.0
+opencv-python-headless==4.7.0.72
+scikit-image==0.21.0
+scikit-learn==1.4.0
+Pillow==9.4.0
+matplotlib==3.7.2
+pandas==1.5.3
+streamlit==1.54.0
+reportlab==4.0.9
+
+# Опционально (обученные модели; ядро работает и без них — есть классический фолбэк):
+#   torch, torchvision — инференс классификатора сорта (weights/sort_classifier.pt).
+#   segmentation-models-pytorch — инференс U-Net сегментации талька (weights/talc_unet.pt).
+#       Без этих пакетов analyze() откатывается: сорт — на эвристику, тальк — на текстурный детектор.
+#       Обучение (T4): training/train_classifier.py (EfficientNet-B0, F1≈0.87),
+#                      training/train_talc.py (U-Net ResNet-18, оталькован-детекция F1≈0.96).

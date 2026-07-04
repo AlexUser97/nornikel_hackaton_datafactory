@@ -1,1 +1,33 @@
+# Служебная папка (содержит контекст и ключи — не в репозиторий)
 /service_folder
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Датасет кейса (большой, не в репозиторий)
+/dataset/
+
+# Локальные данные, результаты анализа, веса моделей
+/data/
+*.pdf
+weights/
+*.pth
+*.pt
+*.onnx
+
+# Временные превью/артефакты в тестовой папке
+tests/real_samples/_*
+
+# ОС / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

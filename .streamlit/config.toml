@@ -1,0 +1,20 @@
+# Отключаем всю телеметрию Streamlit — иначе «офлайн» = полуправда (см. PROJECT_CONTEXT §6).
+[browser]
+gatherUsageStats = false
+
+[server]
+headless = true
+port = 8501
+address = "0.0.0.0"
+maxUploadSize = 200
+enableXsrfProtection = true
+
+[theme]
+base = "dark"
+primaryColor = "#5b8def"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#171b22"
+textColor = "#e6e8eb"
+
+[runner]
+fastReruns = true
