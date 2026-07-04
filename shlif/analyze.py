@@ -166,6 +166,11 @@ def analyze(
 
         clf_says_talc = sp is not None and p_ot >= p_ry and p_ot >= p_tr and p_ot > 0
         ore_class["talc_seg_frac"] = round(talc_seg, 4)
+        if sp is not None:
+            # откалиброванная уверенность классификатора (temperature scaling) +
+            # флаг «требует проверки эксперта» (human-in-the-loop)
+            ore_class["classifier_confidence"] = sp.get("confidence")
+            ore_class["needs_review"] = bool(sp.get("needs_review"))
         if talc_seg > _TALC_SEG_TRIGGER or clf_says_talc:
             ore_class["verdict"] = "Оталькованная руда"
             ore_class["talc_bearing"] = True

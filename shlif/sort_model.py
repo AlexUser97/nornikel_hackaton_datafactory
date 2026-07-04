@@ -28,12 +28,17 @@ _RU_SHORT = {"ryadovye": "рядовая", "trudnoobogatimye": "труднооб
 _MODEL = None
 _CLASSES: list[str] = []
 _TF = None
+_TEMPERATURE = 1.0        # temperature scaling (калибровка уверенности), 1.0 = без калибровки
 _LOAD_FAILED = False
+
+# Порог откалиброванной уверенности: ниже — вердикт помечается «требует проверки эксперта»
+# (human-in-the-loop). Считается на откалиброванных вероятностях (ECE≈0.02).
+LOW_CONFIDENCE: float = 0.70
 
 
 def _lazy_load(path: Path | str = _DEFAULT_PATH):
     """Ленивая загрузка модели и препроцессинга (torch импортируется здесь)."""
-    global _MODEL, _CLASSES, _TF, _LOAD_FAILED
+    global _MODEL, _CLASSES, _TF, _TEMPERATURE, _LOAD_FAILED
     if _MODEL is not None or _LOAD_FAILED:
         return _MODEL
     path = Path(path)
@@ -46,6 +51,7 @@ def _lazy_load(path: Path | str = _DEFAULT_PATH):
 
         ckpt = torch.load(str(path), map_location="cpu", weights_only=False)
         _CLASSES = ckpt.get("classes", list(_VERDICT))
+        _TEMPERATURE = float(ckpt.get("temperature", 1.0))
         model = models.efficientnet_b0(weights=None)
         import torch.nn as nn
 
@@ -98,13 +104,16 @@ def predict_sort(image_rgb: np.ndarray, path: Path | str = _DEFAULT_PATH, tta: b
         probs = []
         for v in views:
             x = _TF(v).unsqueeze(0)
-            probs.append(torch.softmax(model(x), dim=1)[0].numpy())
+            # temperature scaling: делим логиты на T ДО softmax (калибровка уверенности)
+            probs.append(torch.softmax(model(x) / _TEMPERATURE, dim=1)[0].numpy())
     prob = np.mean(probs, axis=0)
     idx = int(prob.argmax())
     cls = _CLASSES[idx]
+    conf = float(prob[idx])
     return {
         "verdict": _VERDICT.get(cls, cls),
-        "confidence": round(float(prob[idx]), 3),
+        "confidence": round(conf, 3),
+        "needs_review": bool(conf < LOW_CONFIDENCE),  # human-in-the-loop
         "probs": {_RU_SHORT.get(_CLASSES[i], _CLASSES[i]): round(float(prob[i]), 3) for i in range(len(_CLASSES))},
         "source": "нейросеть EfficientNet-B0" + (" + TTA" if tta else ""),
     }

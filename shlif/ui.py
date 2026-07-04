@@ -238,10 +238,15 @@ def verdict_html(ore_class: dict, conclusion: str, proportions: dict | None = No
             f'<div style="font-size:1.3rem;font-weight:700;color:{_hex(PHASE_COLORS[3])}">{oxide:.1f}%</div></div>'
             '</div>')
     src = ore_class.get("source", "эвристика по долям фаз")
-    conf = ore_class.get("model_confidence")
+    conf = ore_class.get("classifier_confidence", ore_class.get("model_confidence"))
     badge = (f'<span style="background:{color}22;color:{color};border:1px solid {color}55;'
              f'padding:2px 8px;border-radius:8px;font-size:0.75rem">{src}'
-             + (f' · {conf*100:.0f}%' if conf is not None else "") + '</span>')
+             + (f' · увер. {conf*100:.0f}%' if conf is not None else "") + '</span>')
+    # Human-in-the-loop: низкая откалиброванная уверенность -> явный призыв к эксперту
+    if ore_class.get("needs_review"):
+        badge += ('<span style="background:#b26a0022;color:#f59e0b;border:1px solid #f59e0b55;'
+                  'padding:2px 8px;border-radius:8px;font-size:0.75rem;margin-left:6px">'
+                  '⚠ требует проверки эксперта</span>')
     probs = ore_class.get("model_probs")
     probs_html = ""
     if probs:
