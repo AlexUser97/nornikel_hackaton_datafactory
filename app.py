@@ -69,16 +69,37 @@ def _all_profiles() -> dict:
     return profiles
 
 
+def _overlay_type_map(img: np.ndarray, otm: dict, alpha: float = 0.5) -> np.ndarray:
+    """Полупрозрачная заливка карты сортов руды (3 типа) поверх снимка."""
+    out = np.asarray(img, np.float32).copy()
+    tm = otm["type_map"]
+    for i, col in enumerate(otm["type_colors"]):
+        m = tm == i
+        if m.any():
+            out[m] = (1 - alpha) * out[m] + alpha * np.array(col, np.float32)
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def _zoom_region(im: np.ndarray, factor: float, cx: float, cy: float) -> np.ndarray:
+    """Кроп области вокруг (cx, cy) с увеличением ×factor (приближение панорамы)."""
+    im = np.asarray(im)
+    h, w = im.shape[:2]
+    cw, ch = max(int(w / factor), 16), max(int(h / factor), 16)
+    x0 = int(min(max(cx * w - cw / 2, 0), w - cw))
+    y0 = int(min(max(cy * h - ch / 2, 0), h - ch))
+    crop = im[y0:y0 + ch, x0:x0 + cw]
+    import cv2 as _cv2
+    return _cv2.resize(crop, (w, h), interpolation=_cv2.INTER_NEAREST)
+
+
 def sidebar() -> dict:
     st.sidebar.title("🔬 Кто твой шлиф")
     st.sidebar.caption("QC-ассистент металлографа · протокол по ГОСТ ISO/IEC 17025 · офлайн")
 
     st.sidebar.subheader("1. Снимок шлифа/аншлифа")
     up = st.sidebar.file_uploader("Загрузите SEM/OM-снимок", type=["jpg", "jpeg", "png", "tif", "tiff", "bmp"])
-    with st.sidebar.expander("Нет своего снимка? Демо-образцы"):
-        d1, d2 = st.columns(2)
-        demo_ore = d1.button("Руда Ni-Cu", use_container_width=True)
-        demo_steel = d2.button("Сталь", use_container_width=True)
+    with st.sidebar.expander("Нет своего снимка? Демо-образец"):
+        demo_ore = st.button("Руда Ni-Cu (демо)", use_container_width=True)
 
     st.sidebar.subheader("2. Профиль материала")
     profiles = _all_profiles()
@@ -86,7 +107,7 @@ def sidebar() -> dict:
     idx = profile_names.index(ss.profile) if ss.profile in profile_names else 0
     profile_name = st.sidebar.selectbox(
         "Материал", profile_names, index=idx,
-        help="Определяет имена фаз и применимость балла ASTM E112 (только для сталей). "
+        help="Имена фаз и метод для аншлифа руды (задача ТЗ). "
              "Свои профили можно сохранять (см. «Фазы и формулы»).")
     profile = dict(profiles[profile_name])
 
@@ -143,7 +164,7 @@ def sidebar() -> dict:
     st.sidebar.divider()
     st.sidebar.caption("Стек open-source · веса локально · телеметрия отключена")
 
-    return dict(up=up, demo_ore=demo_ore, demo_steel=demo_steel, profile_name=profile_name, profile=profile,
+    return dict(up=up, demo_ore=demo_ore, profile_name=profile_name, profile=profile,
                 sample_id=sample_id, scale=scale, preset=preset,
                 n_runs=n_runs, tiling=tiling, names=names, formulas=formulas, n_classes=int(n_classes), run=run,
                 protocol=dict(lab_name=lab, customer=customer, operator=operator,
@@ -155,7 +176,7 @@ def load_inputs(inp: dict) -> None:
     ss.profile = inp["profile_name"]
     ss.protocol = inp["protocol"]
 
-    if inp["demo_ore"] or inp["demo_steel"]:
+    if inp["demo_ore"]:
         # Для задачи «срастания + тальк» подбираем доли так, чтобы тальк < 10%
         # (демонстрирует ветку «преобладание срастаний»).
         probs = (0.40, 0.52, 0.08) if inp["profile"].get("classify") else (0.30, 0.25, 0.45)
@@ -258,12 +279,19 @@ def render_passport() -> None:
 
     # --- Левая колонка: изображение со слоями ---
     with left:
+        otm = res.get("ore_type_map")
         layers = ["Сегментация", "Карта неопределённости", "Зоны на верификацию", "Исходник"]
+        if otm is not None:
+            layers.insert(1, "Карта сортов")
         layer = _pills("layer", layers)
         if layer == "Исходник":
             im, cap = img, "Рабочий снимок"
         elif layer == "Сегментация":
             im, cap = viz.overlay_segmentation(img, res["mask"], colors=colors), "Фазовая сегментация"
+        elif layer == "Карта сортов":
+            im = _overlay_type_map(img, otm)
+            frac = "; ".join(f"{n} {v*100:.0f}%" for n, v in otm["type_fractions"].items() if v > 0.001)
+            cap = f"Сорта руды по площади: {frac or 'н/д'}"
         elif layer == "Карта неопределённости":
             im = viz.overlay_uncertainty(img, res["uncertainty_map"])
             cap = f"Карта неопределённости (средняя {res['mean_uncertainty']*100:.0f}%) — ярче = спорнее"
@@ -274,27 +302,32 @@ def render_passport() -> None:
         st.markdown(ui.image_card_html(ui.img_data_uri(im), names, cap, formulas, colors),
                     unsafe_allow_html=True)
 
+        # Зум готовой панорамы/снимка (по просьбе организаторов) — регион + увеличение.
+        with st.expander("🔍 Зум (приближение области)"):
+            z = st.slider("Увеличение", 1.0, 8.0, 1.0, 0.5, key="zoom_f")
+            if z > 1.0:
+                zc1, zc2 = st.columns(2)
+                cx = zc1.slider("Центр X, %", 0, 100, 50, key="zoom_x")
+                cy = zc2.slider("Центр Y, %", 0, 100, 50, key="zoom_y")
+                st.image(_zoom_region(im, z, cx / 100, cy / 100),
+                         caption=f"Зум ×{z:g} (центр {cx}%, {cy}%)", use_container_width=True)
+
     # --- Правая колонка: доли фаз ---
     with right:
         st.markdown(ui.phase_bars_html(res["phase_fractions"], names, und, formulas,
                                        und_help=METRIC_HELP["undetermined"], colors=colors),
                     unsafe_allow_html=True)
 
-    # --- Карточки метрик (ASTM — только для сталей, §6.3) ---
+    # --- Карточки метрик (гранулометрия зёрен минералов, µm) ---
     gm = res.get("grain_meta", {})
-    gs, astm = res["grain_size_um"], res["astm_number"]
-    astm_applicable = res.get("astm_applicable", True)
+    gs = res["grain_size_um"]
     reliable = gm.get("reliable", True)
     warn = "" if reliable else " ⚠"
     grain_val = (f'{gs} <span class="unit">µm</span>{warn}' if gs is not None else "н/д")
     grain_sub = gm.get("note") if not reliable else f"±{gm.get('grain_size_std_um','')} µm"
-    size_label = "Средний размер зерна" if astm_applicable else "Средний размер зёрен (гранулометрия)"
-    if astm_applicable:
-        second = ("Балл зерна (ASTM E112)", f"{astm}" if astm is not None else "н/д",
-                  f"учтено зёрен: {gm.get('n_grains',0)}", METRIC_HELP["astm"])
-    else:
-        second = ("Зёрен учтено", f"{gm.get('n_grains',0)}", "балл ASTM неприменим к рудам",
-                  METRIC_HELP["grain_count"])
+    size_label = "Средний размер зёрен (гранулометрия)"
+    second = ("Зёрен учтено", f"{gm.get('n_grains',0)}", "гранулометрия минералов, µm",
+              METRIC_HELP["grain_count"])
     st.markdown(ui.metric_cards_html([
         (size_label, grain_val, grain_sub or "", METRIC_HELP["grain_size"]),
         second,
@@ -408,7 +441,7 @@ def render_welcome() -> None:
     with st.expander("❓ Методы и модели (что под капотом)"):
         st.markdown(METHODS_HELP)
     st.info("Совет: измените «Предполагаемое загрязнение» и пересчитайте — увидите, как честно растёт "
-            "оценка неопределённости (sim-to-real). Профиль «Сталь» включает балл ASTM E112.")
+            "оценка неопределённости (sim-to-real).")
 
 
 def main() -> None:

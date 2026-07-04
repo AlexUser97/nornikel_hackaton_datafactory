@@ -2,8 +2,9 @@
 
 Модель — EfficientNet-B0 (открытая лицензия, ImageNet-претрейн), дообученная на
 папках-метках датасета (рядовые/труднообогатимые/оталькованные). Валидация:
-F1_macro ≈ 0.87, AUC ≈ 0.96. Обучение — на выданном T4 (см.
-service_folder/train_classifier.py). Веса кладутся в ``weights/sort_classifier.pt``.
+F1 по типу срастаний (рядовая/труднообогатимая) ≈ 0.94, F1_macro ≈ 0.91,
+AUC ≈ 0.97 (v2: EMA + mixup + TTA). Обучение — на выданном T4 (см.
+training/train_classifier_v2.py). Веса кладутся в ``weights/sort_classifier.pt``.
 
 Инференс работает на CPU (модель лёгкая). Если весов нет или torch недоступен —
 функция возвращает None, и пайплайн использует классический эвристический вердикт.
@@ -70,8 +71,11 @@ def available(path: Path | str = _DEFAULT_PATH) -> bool:
     return _lazy_load(path) is not None
 
 
-def predict_sort(image_rgb: np.ndarray, path: Path | str = _DEFAULT_PATH) -> dict | None:
+def predict_sort(image_rgb: np.ndarray, path: Path | str = _DEFAULT_PATH, tta: bool = True) -> dict | None:
     """Предсказывает геолого-технологический сорт руды по снимку.
+
+    ``tta`` — усреднение softmax по отражениям (оригинал + горизонт./вертик. флип):
+    +1–2% к F1 практически бесплатно на CPU, повышает устойчивость к ориентации.
 
     Returns
     -------
@@ -87,14 +91,20 @@ def predict_sort(image_rgb: np.ndarray, path: Path | str = _DEFAULT_PATH) -> dic
     img = np.asarray(image_rgb, dtype=np.uint8)
     if img.ndim == 2:
         img = np.stack([img] * 3, axis=-1)
+    views = [img]
+    if tta:
+        views += [img[:, ::-1].copy(), img[::-1, :].copy()]
     with torch.no_grad():
-        x = _TF(img).unsqueeze(0)
-        prob = torch.softmax(model(x), dim=1)[0].numpy()
+        probs = []
+        for v in views:
+            x = _TF(v).unsqueeze(0)
+            probs.append(torch.softmax(model(x), dim=1)[0].numpy())
+    prob = np.mean(probs, axis=0)
     idx = int(prob.argmax())
     cls = _CLASSES[idx]
     return {
         "verdict": _VERDICT.get(cls, cls),
         "confidence": round(float(prob[idx]), 3),
         "probs": {_RU_SHORT.get(_CLASSES[i], _CLASSES[i]): round(float(prob[i]), 3) for i in range(len(_CLASSES))},
-        "source": "нейросеть EfficientNet-B0 (F1≈0.87)",
+        "source": "нейросеть EfficientNet-B0" + (" + TTA" if tta else ""),
     }

@@ -156,9 +156,10 @@ def build_passport_pdf(
                 v = pr.get(k)
                 return "не оцен." if v is None else f"{v*100:.1f}"
             prows = [["Доля площади", "%"],
+                     ["Общая доля сульфидов", _pct("общая доля сульфидов")],
                      ["Тальк (зона оталькования, целиком)", _pct("тальк (зона оталькования)")],
                      ["Оксиды (магнетит)", _pct("оксиды (магнетит)")],
-                     ["Срастания (сульфидные вкрапленники)", _pct("срастания (рудные вкрапленники)")]]
+                     ["Срастания (обычные + тонкие)", _pct("срастания (рудные вкрапленники)")]]
             if pr.get("срастания (рудные вкрапленники)") is not None:
                 prows += [["  · обычные срастания", _pct("обычные срастания")],
                           ["  · тонкие срастания", _pct("тонкие срастания")],
@@ -203,19 +204,12 @@ def build_passport_pdf(
     story.append(Paragraph("Метрики микроструктуры", h2))
     gm = result.get("grain_meta", {})
     gs = result.get("grain_size_um")
-    astm = result.get("astm_number")
-    astm_applicable = result.get("astm_applicable", True)
     reliable = gm.get("reliable", True)
-    size_label = "Средний размер зерна" if astm_applicable else "Средний размер зёрен (гранулометрия)"
+    size_label = "Средний размер зёрен (гранулометрия)"
     gs_str = (f"{gs} µm" if gs is not None else "н/д") + ("" if reliable else " ⚠")
     metric_rows = [[size_label, gs_str, f"±{gm.get('grain_size_std_um', '—')} µm"]]
-    # Балл ASTM E112 — только для сталей/сплавов (отчёт v2, §6.3).
-    if astm_applicable:
-        metric_rows.append(["Балл зерна ASTM (E112)", f"{astm}" if astm is not None else "н/д",
-                            f"зёрен учтено: {gm.get('n_grains', 0)}"])
-    else:
-        metric_rows.append(["Зёрен учтено (гранулометрия)", f"{gm.get('n_grains', 0)}",
-                            "балл ASTM E112 неприменим к рудам"])
+    # Гранулометрия зёрен минералов (µm); балл ASTM E112 к рудам неприменим.
+    metric_rows.append(["Зёрен учтено (гранулометрия)", f"{gm.get('n_grains', 0)}", ""])
     metric_rows.append(["Дефектов (поры/включения)", str(len(result.get("defects", []))), ""])
     metric_tbl = Table(metric_rows, colWidths=[55 * mm, 40 * mm, 55 * mm])
     metric_tbl.setStyle(_kv_style())

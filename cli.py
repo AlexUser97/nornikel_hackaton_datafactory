@@ -41,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--demo", action="store_true", help="Использовать синтетический демо-образец")
     ap.add_argument("--scale", type=float, default=0.35, help="Масштаб µm/px (по умолч. 0.35)")
     ap.add_argument("--profile", choices=list(MATERIAL_PROFILES), default=None,
-                    help="Профиль материала (имена фаз, применимость ASTM)")
+                    help="Профиль материала (аншлиф руды — по умолчанию)")
     ap.add_argument("--corrupt", choices=list(_PRESET_ALIASES), help="Демо sim-to-real загрязнение")
     ap.add_argument("--runs", type=int, default=5, help="Прогонов ансамбля неуверенности")
     ap.add_argument("--customer", default=None, help="Заказчик (в шапку протокола)")

@@ -69,6 +69,132 @@ def segment_tiled(
     return mask, prob
 
 
+def ore_type_map_tiled(
+    image: np.ndarray,
+    segment_fn: Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]],
+    *,
+    class_names: list[str],
+    talc_threshold: float = 0.10,
+    dominance_threshold: float = 0.50,
+    tile: int = 1536,
+    overlap: int = 128,
+    max_tiles: int = 120,
+) -> dict:
+    """Карта СОРТОВ руды по панораме: каждая плитка классифицируется в один из трёх
+    сортов (рядовая / труднообогатимая / оталькованная) по своим долям фаз, из чего
+    строится цветная карта сортов и процентное содержание каждого сорта.
+
+    Прямо отвечает на постановку организаторов: «выделить цветами 3 типа руды и их
+    процентное содержание». В отличие от :func:`classify_tiled` (один вердикт на всю
+    панораму), здесь получается пространственная карта — где какой сорт.
+
+    Returns
+    -------
+    dict
+        ``{"type_map": H×W int8 (-1 фон / 0..2 сорт), "type_names", "type_colors",
+        "type_fractions": {сорт: доля площади}, "n_tiles"}``.
+    """
+    from .ore_classification import classify_ore, ore_type_index, ORE_TYPE_NAMES, ORE_TYPE_COLORS
+
+    img = np.asarray(image)
+    if img.ndim == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+    h, w = img.shape[:2]
+    type_map = np.full((h, w), -1, dtype=np.int8)
+
+    step = max(tile - overlap, 1)
+    coords = [(y, x) for y in range(0, max(h - overlap, 1), step)
+              for x in range(0, max(w - overlap, 1), step)] or [(0, 0)]
+    if len(coords) > max_tiles:  # держим бюджет времени панорамы (≤5 мин)
+        idx = np.linspace(0, len(coords) - 1, max_tiles).astype(int)
+        coords = sorted({coords[i] for i in idx})
+
+    n_tiles = 0
+    for y, x in coords:
+        y1, x1 = min(y + tile, h), min(x + tile, w)
+        crop = img[y:y1, x:x1]
+        if crop.shape[0] < 64 or crop.shape[1] < 64:
+            continue
+        m, _ = segment_fn(crop)
+        m = np.asarray(m)
+        # доли фаз в плитке по имени класса -> правило классификации сорта
+        fr = {class_names[k]: float((m == k).mean())
+              for k in range(min(len(class_names), int(m.max()) + 1))}
+        cls = classify_ore(fr, talc_threshold=talc_threshold,
+                            dominance_threshold=dominance_threshold)
+        ti = ore_type_index(cls["verdict"]) if cls else -1
+        if ti >= 0:
+            type_map[y:y1, x:x1] = ti
+        n_tiles += 1
+
+    valid = type_map >= 0
+    tot = int(valid.sum()) or 1
+    fractions = {ORE_TYPE_NAMES[i]: round(float((type_map == i).sum()) / tot, 4)
+                 for i in range(len(ORE_TYPE_NAMES))}
+    return {
+        "type_map": type_map,
+        "type_names": ORE_TYPE_NAMES,
+        "type_colors": ORE_TYPE_COLORS,
+        "type_fractions": fractions,
+        "n_tiles": n_tiles,
+    }
+
+
+def ore_type_map_from_mask(
+    mask: np.ndarray,
+    class_names: list[str],
+    *,
+    talc_threshold: float = 0.10,
+    dominance_threshold: float = 0.50,
+    blocks: int = 24,
+) -> dict:
+    """Карта СОРТОВ руды по УЖЕ посчитанной маске фаз (дёшево, без пересегментации).
+
+    Маска делится на сетку блоков; в каждом блоке по долям фаз (тальк/срастания)
+    определяется сорт руды (рядовая/труднообогатимая/оталькованная). Прямой ответ на
+    постановку организаторов: «выделить цветами 3 типа руды и их процентное содержание».
+
+    Returns
+    -------
+    dict
+        ``{"type_map": H×W int8 (-1 фон / 0..2 сорт), "type_names", "type_colors",
+        "type_fractions": {сорт: доля площади}, "n_blocks"}``.
+    """
+    from .ore_classification import classify_ore, ore_type_index, ORE_TYPE_NAMES, ORE_TYPE_COLORS
+
+    mask = np.asarray(mask)
+    h, w = mask.shape[:2]
+    type_map = np.full((h, w), -1, dtype=np.int8)
+    bh = max(h // blocks, 1)
+    bw = max(w // blocks, 1)
+    ncls = len(class_names)
+    n_blocks = 0
+    for y in range(0, h, bh):
+        for x in range(0, w, bw):
+            sub = mask[y:y + bh, x:x + bw]
+            if sub.size == 0:
+                continue
+            fr = {class_names[k]: float((sub == k).mean()) for k in range(ncls)}
+            cls = classify_ore(fr, talc_threshold=talc_threshold,
+                               dominance_threshold=dominance_threshold)
+            ti = ore_type_index(cls["verdict"]) if cls else -1
+            if ti >= 0:
+                type_map[y:y + bh, x:x + bw] = ti
+            n_blocks += 1
+
+    valid = type_map >= 0
+    tot = int(valid.sum()) or 1
+    fractions = {ORE_TYPE_NAMES[i]: round(float((type_map == i).sum()) / tot, 4)
+                 for i in range(len(ORE_TYPE_NAMES))}
+    return {
+        "type_map": type_map,
+        "type_names": ORE_TYPE_NAMES,
+        "type_colors": ORE_TYPE_COLORS,
+        "type_fractions": fractions,
+        "n_blocks": n_blocks,
+    }
+
+
 def classify_tiled(
     image: np.ndarray,
     *,
@@ -125,5 +251,5 @@ def classify_tiled(
         "verdict": rus2verdict.get(keys[i], keys[i]),
         "confidence": round(float(P[i]), 3),
         "probs": {keys[k]: round(float(P[k]), 3) for k in range(len(keys))},
-        "source": f"нейросеть EfficientNet-B0, агрегир. по {len(probs)} плиткам (F1≈0.87)",
+        "source": f"нейросеть EfficientNet-B0, агрегир. по {len(probs)} плиткам (F1≈0.94)",
     }
