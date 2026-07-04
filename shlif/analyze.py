@@ -228,8 +228,13 @@ def analyze(
     ore_type_map = None
     if tile and ore_class is not None:
         try:
-            from .tiling import ore_type_map_from_mask
-            ore_type_map = ore_type_map_from_mask(mask, class_names)
+            # Основной путь — карта тем же классификатором-ансамблем, что и вердикт
+            # (согласована с ним). Фолбэк — правило по маске, если классификатора нет.
+            from .tiling import ore_type_map_classified, ore_type_map_from_mask
+            model_img2 = image if image.ndim == 3 else cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+            ore_type_map = ore_type_map_classified(model_img2, talc_threshold=TALC_THRESHOLD)
+            if ore_type_map is None:
+                ore_type_map = ore_type_map_from_mask(mask, class_names)
         except Exception:  # noqa: BLE001 — карта сортов не критична для паспорта
             ore_type_map = None
 

@@ -140,6 +140,77 @@ def ore_type_map_tiled(
     }
 
 
+def ore_type_map_classified(
+    image: np.ndarray,
+    *,
+    talc_threshold: float = 0.10,
+    tile: int = 900,
+    max_tiles: int = 80,
+) -> dict | None:
+    """Карта СОРТОВ руды по панораме тем же АНСАМБЛЕМ, что и общий вердикт: каждая
+    плитка классифицируется обученным классификатором (+ доля талька по сегментации),
+    из чего строится согласованная с вердиктом цветная карта сортов и их проценты.
+
+    В отличие от :func:`ore_type_map_from_mask` (правило по маске), здесь используется
+    сам классификатор — карта не расходится с итоговым вердиктом. Возвращает None, если
+    классификатора нет (тогда вызывающий откатывается на карту по маске).
+    """
+    from .sort_model import predict_sort
+    from . import sort_model, talc_model
+    from .ore_classification import ORE_TYPE_NAMES, ORE_TYPE_COLORS
+
+    if sort_model._lazy_load() is None:
+        return None
+    img = np.asarray(image)
+    if img.ndim == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+    h, w = img.shape[:2]
+    type_map = np.full((h, w), -1, dtype=np.int8)
+
+    coords = [(y, x) for y in range(0, h, tile) for x in range(0, w, tile)]
+    if len(coords) > max_tiles:  # держим бюджет времени панорамы
+        step = int(np.ceil(len(coords) / max_tiles))
+        coords = coords[::step]
+    talc_ok = talc_model.available()
+    n = 0
+    for y, x in coords:
+        y1, x1 = min(y + tile, h), min(x + tile, w)
+        crop = img[y:y1, x:x1]
+        if crop.shape[0] < 48 or crop.shape[1] < 48:
+            continue
+        sp = predict_sort(crop, tta=False)  # без TTA — плиток много, время бережём
+        if sp is None:
+            continue
+        pr = sp["probs"]
+        p_ot = pr.get("оталькованная", 0.0)
+        p_ry, p_tr = pr.get("рядовая", 0.0), pr.get("труднообогатимая", 0.0)
+        talc_frac = 0.0
+        if talc_ok:
+            tm = talc_model.predict_talc_mask(crop)
+            if tm is not None:
+                talc_frac = float(tm.mean())
+        # тот же ансамбль, что и в analyze(): оталькованная / рядовая / труднообогатимая
+        if talc_frac > talc_threshold or (p_ot >= p_ry and p_ot >= p_tr and p_ot > 0):
+            ti = 2
+        elif p_ry >= p_tr:
+            ti = 0
+        else:
+            ti = 1
+        type_map[y:y1, x:x1] = ti
+        n += 1
+
+    tot = int((type_map >= 0).sum()) or 1
+    fractions = {ORE_TYPE_NAMES[i]: round(float((type_map == i).sum()) / tot, 4)
+                 for i in range(len(ORE_TYPE_NAMES))}
+    return {
+        "type_map": type_map,
+        "type_names": ORE_TYPE_NAMES,
+        "type_colors": ORE_TYPE_COLORS,
+        "type_fractions": fractions,
+        "n_tiles": n,
+    }
+
+
 def ore_type_map_from_mask(
     mask: np.ndarray,
     class_names: list[str],
