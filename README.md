@@ -307,7 +307,7 @@ python cli.py --demo --evaluate --corrupt heavy   # sim-to-real: метрики 
 
 - Весь стек open-source (NumPy/SciPy/OpenCV/scikit-image/Streamlit/reportlab), лицензии BSD/MIT/Apache.
 - **Телеметрия Streamlit отключена** (`.streamlit/config.toml` + переменная окружения).
-- Никаких зарубежных облаков и Claude API в разворачиваемом решении. Интернет в рантайме не нужен.
+- Никаких зарубежных облаков и внешних API в разворачиваемом решении. Интернет в рантайме не нужен.
 - Шрифты и графики рендерятся локально (matplotlib Agg, DejaVuSans из поставки).
 
 ---
