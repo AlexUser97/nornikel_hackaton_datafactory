@@ -156,9 +156,13 @@ def sidebar() -> dict:
     st.sidebar.subheader("4. Фазы и формулы")
     base_names = profile.get("class_names", DEFAULT_CLASS_NAMES)
     base_formulas = profile.get("formulas", [""] * len(base_names))
+    # По ТЗ (v1) — РОВНО 3 класса: тонкие/обычные срастания + тальк (нерудная фракция).
+    # Число фаз зафиксировано, менять нельзя.
     n_classes = st.sidebar.number_input(
-        "Число фаз", min_value=2, max_value=MAX_CLASSES, value=len(base_names), step=1,
-        help="Сколько фаз выделять по яркости (тёмная → светлая). Метки можно править и после анализа.")
+        "Число фаз (по ТЗ — 3)", min_value=3, max_value=3, value=3, step=1, disabled=True,
+        help="В версии 1 — ровно 3 класса по ТЗ: тонкие срастания (красный), обычные срастания "
+             "(зелёный), тальк (синий). ТАЛЬК = вся нерудная фракция (вмещающая порода с тёмными "
+             "вкраплениями). Число классов зафиксировано и не меняется.")
     names, formulas = [], []
     with st.sidebar.expander("Имена и формулы фаз (тёмная → светлая)"):
         for i in range(int(n_classes)):
