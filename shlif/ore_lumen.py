@@ -76,11 +76,40 @@ def _reinhard(rgb: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(np.clip(lab, 0, 255).astype(np.uint8), cv2.COLOR_LAB2RGB)
 
 
+def _classical_phases(rgb: np.ndarray) -> np.ndarray:
+    """Классический фолбэк (нет весов LumenStone): 0 матрица / 1 сульфид / 2 магнетит
+    по яркости и цвету отражённого света. Сульфиды — светлые/тёплые; магнетит —
+    нейтрально-серый; матрица — тёмная."""
+    from skimage.filters import threshold_multiotsu
+    from .segmentation import to_gray_uint8
+
+    gray = to_gray_uint8(rgb)
+    try:
+        thr = threshold_multiotsu(gray, classes=3)
+        phase = np.digitize(gray, bins=thr)
+    except ValueError:
+        phase = np.zeros_like(gray, dtype=int)
+    R, G, B = rgb[:, :, 0].astype(np.int16), rgb[:, :, 1].astype(np.int16), rgb[:, :, 2].astype(np.int16)
+    warm = R - B
+    mx = np.maximum(np.maximum(R, G), B)
+    mn = np.minimum(np.minimum(R, G), B)
+    sat = (mx - mn) / np.maximum(mx, 1)
+    is_neutral = (warm < 10) & (sat < 0.22)
+    bright, mid = phase == 2, phase == 1
+    out = np.zeros(gray.shape, np.uint8)                    # 0 матрица
+    out[(mid & is_neutral) | (bright & is_neutral & (sat < 0.12))] = 2   # магнетит
+    out[bright | (mid & ~is_neutral)] = 1                   # сульфид
+    return out
+
+
 def _predict_phases(rgb: np.ndarray) -> np.ndarray:
-    """LumenStone-модель на цвет-нормализованном снимке -> 0 матрица/1 сульфид/2 магнетит."""
+    """0 матрица / 1 сульфид / 2 магнетит. Обученная модель LumenStone (+ Reinhard
+    цвет-нормализация) если веса есть, иначе классический фолбэк."""
+    model = _lazy_load()
+    if model is None:
+        return _classical_phases(rgb)
     import torch
 
-    model = _lazy_load()
     h, w = rgb.shape[:2]
     norm = _reinhard(rgb)
     x = cv2.resize(norm, (_INPUT, _INPUT)).astype(np.float32) / 255.0

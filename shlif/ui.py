@@ -221,19 +221,22 @@ def verdict_html(ore_class: dict, conclusion: str, proportions: dict | None = No
     prop_html = ""
     if proportions:
         sulf = proportions.get("общая доля сульфидов", 0) * 100
-        talc = proportions.get("доля талька (нерудная фракция)", 0) * 100
+        talc = proportions.get("доля талька", 0) * 100
         obych = proportions.get("обычные срастания", 0) * 100
         tonk = proportions.get("тонкие срастания", 0) * 100
+        host = proportions.get("вмещающая порода", 0) * 100
         prop_html = (
-            '<div style="display:flex;gap:22px;margin:10px 0 2px;flex-wrap:wrap">'
+            '<div style="display:flex;gap:20px;margin:10px 0 2px;flex-wrap:wrap">'
             f'<div><div class="metric-label">Общая доля сульфидов</div>'
             f'<div style="font-size:1.3rem;font-weight:700;color:{_hex(PHASE_COLORS[1])}">{sulf:.1f}%</div></div>'
-            f'<div><div class="metric-label">Доля талька <span class="kts-sub">(нерудная фракция)</span></div>'
+            f'<div><div class="metric-label">Доля талька</div>'
             f'<div style="font-size:1.3rem;font-weight:700;color:{_hex(PHASE_COLORS[3])}">{talc:.1f}%</div></div>'
             f'<div><div class="metric-label">Обычные срастания</div>'
             f'<div style="font-size:1.3rem;font-weight:700;color:{_hex(PHASE_COLORS[2])}">{obych:.1f}%</div></div>'
             f'<div><div class="metric-label">Тонкие срастания</div>'
             f'<div style="font-size:1.3rem;font-weight:700;color:{_hex(PHASE_COLORS[5])}">{tonk:.1f}%</div></div>'
+            f'<div><div class="metric-label">Вмещающая порода</div>'
+            f'<div style="font-size:1.3rem;font-weight:700;color:#8891a0">{host:.1f}%</div></div>'
             '</div>')
     src = ore_class.get("source", "эвристика по долям фаз")
     conf = ore_class.get("classifier_confidence", ore_class.get("model_confidence"))

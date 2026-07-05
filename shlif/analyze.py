@@ -122,22 +122,23 @@ def analyze(
         except Exception:  # noqa: BLE001
             defects = []
 
-    # --- Классификация сорта по ТЗ (v1: 3 класса) ----------------------------
-    # ТАЛЬК = ВСЯ нерудная фракция (не сульфидные срастания). Доля талька почти всегда
-    # >10%, поэтому решает не голое правило ">10%", а обученный КЛАССИФИКАТОР сорта
-    # (рядовая/труднообогатимая/оталькованная) — он выучил экспертную логику. Доли
-    # талька/срастаний показываем как метрики ТЗ.
+    # --- Классификация сорта по ТЗ (4 класса) --------------------------------
+    # Сорт (рядовая/труднообогатимая/оталькованная) даёт обученный КЛАССИФИКАТОР —
+    # он выучил экспертную логику. Доли фаз (сульфиды/тальк/срастания) показываем как
+    # метрики ТЗ. Тальк — отдельный класс (зоны оталькования), вмещающая порода — прочее.
     obych_idx = next((i for i, n in enumerate(class_names) if "обыч" in n.lower()), None)
     tonk_idx = next((i for i, n in enumerate(class_names) if "тонк" in n.lower()), None)
+    talc_idx = next((i for i, n in enumerate(class_names) if "тальк" in n.lower()), None)
+    host_idx = next((i for i, n in enumerate(class_names) if "вмещ" in n.lower() or "порода" in n.lower()), None)
     ore_idx = [i for i, n in enumerate(class_names) if "сраст" in n.lower()]
     ore_area = np.isin(mask, ore_idx) if ore_idx else np.zeros_like(mask, bool)
-    talc_frac = float((~ore_area).mean())           # тальк = нерудная фракция
+    talc_frac = float((mask == talc_idx).mean()) if talc_idx is not None else 0.0
 
     ore_class = classify_ore(fractions)
     if ore_class is not None:
         model_img = image if image.ndim == 3 else cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
         ore_class["talc_seg_frac"] = round(talc_frac, 4)
-        # классификатор сорта (3 класса), при панораме — агрегирование по плиткам
+        # классификатор сорта (3 сорта), при панораме — агрегирование по плиткам
         sp, p_ot, p_ry, p_tr = None, 0.0, 0.0, 0.0
         try:
             from .sort_model import predict_sort
@@ -164,29 +165,30 @@ def analyze(
             ore_class["source"] = sp["source"]
             ore_class["model_confidence"] = round(sp.get("confidence", pv), 3)
             ore_class["rule"] = (f"классификатор сорта: {verdict.split()[0].lower()} (p={pv:.2f}); "
-                                 f"тальк (нерудная фракция) {talc_frac*100:.0f}%, "
-                                 f"сульфиды {(1-talc_frac)*100:.0f}%")
+                                 f"тальк {talc_frac*100:.0f}%, сульфиды {float(ore_area.mean())*100:.0f}%")
         else:
-            # фолбэк без классификатора: по преобладанию срастаний (тальк=нерудная фракция
-            # неинформативен как решающий сигнал в v1)
+            # фолбэк без классификатора: по преобладанию срастаний
             ob = float((mask == obych_idx).mean()) if obych_idx is not None else 0.0
             tn = float((mask == tonk_idx).mean()) if tonk_idx is not None else 0.0
-            ore_class["verdict"] = "Рядовая руда" if ob >= tn else "Труднообогатимая руда"
-            ore_class["talc_bearing"] = False
-            ore_class["source"] = "эвристика по преобладанию срастаний"
-            ore_class["rule"] = (f"классификатора нет; преобладание "
-                                 f"{'обычных' if ob >= tn else 'тонких'} срастаний")
+            if talc_frac > TALC_THRESHOLD:
+                ore_class["verdict"] = "Оталькованная руда"; ore_class["talc_bearing"] = True
+                ore_class["rule"] = f"классификатора нет; тальк {talc_frac*100:.0f}% > {TALC_THRESHOLD*100:.0f}%"
+            else:
+                ore_class["verdict"] = "Рядовая руда" if ob >= tn else "Труднообогатимая руда"
+                ore_class["talc_bearing"] = False
+                ore_class["rule"] = f"классификатора нет; преобладание {'обычных' if ob >= tn else 'тонких'} срастаний"
+            ore_class["source"] = "эвристика по долям фаз"
     conclusion = conclusion_text(fractions, ore_class, ens.uncertainty.mean()) if ore_class else ""
 
-    # --- Доли площадей (ТЗ): общая доля сульфидов, доля талька, по типам срастаний ----
-    # v1: тальк = нерудная фракция (всё, что не сульфидное срастание).
+    # --- Доли площадей (ТЗ): общая доля сульфидов, тальк, срастания, вмещающая порода ----
     proportions = None
     if ore_class is not None:
         proportions = {
             "общая доля сульфидов": round(float(ore_area.mean()), 4),
-            "доля талька (нерудная фракция)": round(talc_frac, 4),
+            "доля талька": round(talc_frac, 4),
             "обычные срастания": round(float((mask == obych_idx).mean()), 4) if obych_idx is not None else 0.0,
             "тонкие срастания": round(float((mask == tonk_idx).mean()), 4) if tonk_idx is not None else 0.0,
+            "вмещающая порода": round(float((mask == host_idx).mean()), 4) if host_idx is not None else 0.0,
         }
 
     # --- Карта сортов руды (для панорам): цветовое выделение 3 типов + % ------

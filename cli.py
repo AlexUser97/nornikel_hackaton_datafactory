@@ -23,7 +23,10 @@ from shlif import analyze
 from shlif.config import DEFAULT_PROFILE, MATERIAL_PROFILES
 from shlif.demo_data import synthetic_microstructure
 from shlif.io_utils import load_image, result_to_csv, result_to_json_dict
+from shlif.ore_lumen import ore_lumen_segment
 from shlif.ore_petro import ore_petro_segment
+
+_SEGMENTERS = {"ore_lumen": ore_lumen_segment, "ore_petro": ore_petro_segment}
 from shlif.report import build_passport_pdf
 from shlif.simto_real import DEMO_PRESETS, corrupt
 
@@ -62,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     protocol_meta = {"customer": args.customer, "lab_name": args.lab, "method": profile["method"]}
 
     def process(image, name: str, true_mask=None) -> None:
-        seg_fn = ore_petro_segment if profile.get("segmenter") == "ore_petro" else None
+        seg_fn = _SEGMENTERS.get(profile.get("segmenter"))
         runs = 1 if seg_fn is not None else args.runs  # ore-petro детерминирован
         # Тайлинг: явный --tile или авто для крупных панорам (>5000 px по стороне).
         tile = args.tile or (1024 if max(image.shape[:2]) > 5000 else 0)

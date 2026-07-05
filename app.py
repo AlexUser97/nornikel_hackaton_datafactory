@@ -40,7 +40,10 @@ from shlif.io_utils import (
     result_to_json_dict,
     save_custom_profile,
 )
+from shlif.ore_lumen import ore_lumen_segment
 from shlif.ore_petro import ore_petro_segment
+
+_SEGMENTERS = {"ore_lumen": ore_lumen_segment, "ore_petro": ore_petro_segment}
 from shlif.report import build_passport_pdf
 from shlif.simto_real import DEMO_PRESET_DESC, DEMO_PRESETS, corrupt
 
@@ -156,13 +159,14 @@ def sidebar() -> dict:
     st.sidebar.subheader("4. Фазы и формулы")
     base_names = profile.get("class_names", DEFAULT_CLASS_NAMES)
     base_formulas = profile.get("formulas", [""] * len(base_names))
-    # По ТЗ (v1) — РОВНО 3 класса: тонкие/обычные срастания + тальк (нерудная фракция).
+    # По ТЗ — 4 класса: тонкие/обычные срастания, тальк, вмещающая порода.
     # Число фаз зафиксировано, менять нельзя.
     n_classes = st.sidebar.number_input(
-        "Число фаз (по ТЗ — 3)", min_value=3, max_value=3, value=3, step=1, disabled=True,
-        help="В версии 1 — ровно 3 класса по ТЗ: тонкие срастания (красный), обычные срастания "
-             "(зелёный), тальк (синий). ТАЛЬК = вся нерудная фракция (вмещающая порода с тёмными "
-             "вкраплениями). Число классов зафиксировано и не меняется.")
+        "Число фаз (по ТЗ — 4)", min_value=4, max_value=4, value=4, step=1, disabled=True,
+        help="4 класса по ТЗ: тонкие срастания (красный), обычные срастания (зелёный), тальк "
+             "(синий — зоны оталькования с тёмными вкраплениями), вмещающая порода (серый — прочая "
+             "нерудная матрица). Сульфиды — обученной моделью (LumenStone S2 + доменная адаптация), "
+             "тальк — U-Net. Число классов зафиксировано.")
     names, formulas = [], []
     with st.sidebar.expander("Имена и формулы фаз (тёмная → светлая)"):
         for i in range(int(n_classes)):
@@ -237,7 +241,7 @@ def run_analysis(inp: dict) -> None:
     profile = inp["profile"]
     ss.formulas = inp["formulas"]
     ss.labels = list(inp["names"])          # редактируемые метки для отображения
-    seg_fn = ore_petro_segment if profile.get("segmenter") == "ore_petro" else None
+    seg_fn = _SEGMENTERS.get(profile.get("segmenter"))
     # Для ore-petro сегментатор детерминирован (правила + U-Net талька) — ансамбль не нужен.
     n_runs = 1 if seg_fn is not None else inp["n_runs"]
     # Тайлинг: по флагу или авто для крупных снимков (>5000 px по стороне).
